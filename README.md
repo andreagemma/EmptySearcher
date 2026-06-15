@@ -1,67 +1,41 @@
 # EmptySearcher
 
-Desktop app Python cross-platform per individuare cartelle vuote o "effettivamente vuote" in base a regole di ignore.
+EmptySearcher e' un'app desktop per trovare cartelle vuote o "effettivamente vuote", cioe' cartelle che contengono solo file o sottocartelle ignorati.
 
-## Funzionalita'
+## Installazione
 
-- Scansione ricorsiva di una cartella radice
-- Pattern file ignorati: i file corrispondenti non contano come contenuto
-- Pattern cartelle ignorate: le cartelle corrispondenti non contano come contenuto
-- Pattern esclusi: la ricerca non entra in questi percorsi e non li propone per l'eliminazione
-- Salvataggio e ricarica della configurazione con ripristino automatico all'avvio
-- Memoria dell'ultima cartella selezionata anche per il dialog di scelta cartella
-- Risultati in struttura ad albero con checkbox, tutte selezionate di default
-- Menu contestuale per aggiungere pattern di ignore/exclude o inviare subito al cestino
-- Eliminazione sicura nel cestino di sistema tramite `Send2Trash`
-- Configurazione persistente per root e pattern
+Scarica il pacchetto adatto al tuo sistema dalla pagina `Releases` del repository GitHub:
 
-## Avvio sviluppo
+- Windows: `EmptySearcher-windows.zip`
+- macOS: `EmptySearcher-macos.zip`
+- Linux: `EmptySearcher-linux.tar.gz`
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
-emptysearcher
-```
+Dopo il download:
 
-## Build eseguibile
+1. estrai l'archivio;
+2. avvia l'applicazione.
 
-Esempio con PyInstaller:
+Avvio per sistema:
 
-```bash
-pip install ".[build]"
-pyinstaller --noconfirm --windowed --name EmptySearcher --paths src src/emptysearcher/app.py
-```
+- Windows: esegui `EmptySearcher.exe`
+- macOS: apri `EmptySearcher.app`
+- Linux: esegui il binario `EmptySearcher`
 
-Per un vero output cross-platform, la build va eseguita sulla piattaforma di destinazione:
+## Utilizzo
 
-- Windows -> `.exe`
-- macOS -> `.app`
-- Linux -> binario nativo
+1. seleziona la cartella radice da analizzare;
+2. imposta, se necessario, file ignorati, cartelle ignorate e percorsi esclusi;
+3. avvia la scansione;
+4. controlla la barra di avanzamento, il numero di cartelle lette e il totale delle cartelle individuate;
+5. se serve, interrompi la scansione con `Arresta scansione`;
+6. nei risultati, lascia selezionate le cartelle da eliminare oppure deseleziona quelle da mantenere;
+7. usa il menu contestuale per aprire una cartella, aggiungerla agli ignorati, aggiungerla agli esclusi oppure inviarla subito al cestino;
+8. premi `Elimina selezionate nel cestino` per inviare al cestino tutte le cartelle selezionate.
 
-## Build automatica su GitHub
+## Comportamento
 
-Il repository include la workflow [build-release.yml](.github/workflows/build-release.yml) che:
-
-- compila l'app su `Windows`, `macOS` e `Linux`;
-- allega i pacchetti come artifact del workflow a ogni `push`, `pull request` o avvio manuale;
-- pubblica automaticamente gli asset della release quando viene creato un tag `v*`, per esempio `v0.1.0`.
-
-Asset pubblicati:
-
-- `EmptySearcher-windows.zip`
-- `EmptySearcher-macos.zip`
-- `EmptySearcher-linux.tar.gz`
-
-Esempio di pubblicazione release:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Una volta esiste una release GitHub, i binari possono essere scaricati direttamente da remoto dalla pagina release o tramite URL stabili del tipo:
-
-- `https://github.com/<owner>/<repo>/releases/latest/download/EmptySearcher-windows.zip`
-- `https://github.com/<owner>/<repo>/releases/latest/download/EmptySearcher-macos.zip`
-- `https://github.com/<owner>/<repo>/releases/latest/download/EmptySearcher-linux.tar.gz`
+- I file ignorati non vengono conteggiati come contenuto della cartella.
+- Le cartelle ignorate non vengono conteggiate come contenuto della cartella padre.
+- I percorsi esclusi non vengono analizzati e non compaiono nei risultati.
+- Le eliminazioni vengono inviate al cestino di sistema, non cancellate in modo definitivo.
+- L'app salva la configurazione e riparte dall'ultima cartella e dagli ultimi pattern usati.

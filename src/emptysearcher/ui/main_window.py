@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QPalette
+from PySide6.QtCore import QThread, Qt, QUrl, Signal
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -34,7 +36,7 @@ from PySide6.QtWidgets import (
 from send2trash import send2trash
 
 from emptysearcher.config import AppConfig, load_config, save_config
-from emptysearcher.scanner import CandidateNode, FolderScanner, ScanResult
+from emptysearcher.scanner import CandidateNode, FolderScanner, ScanProgress, ScanResult
 
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -42,10 +44,12 @@ PATH_ROLE = Qt.ItemDataRole.UserRole
 
 class ScanWorker(QThread):
     scan_finished = Signal(object, str)
+    scan_progress = Signal(int, int, str)
 
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self.config = replace(config)
+        self._cancel_event = Event()
 
     def run(self) -> None:
         root = Path(self.config.root_folder).expanduser()
@@ -54,9 +58,21 @@ class ScanWorker(QThread):
             ignored_file_patterns=self.config.ignored_file_patterns,
             ignored_dir_patterns=self.config.ignored_dir_patterns,
             excluded_patterns=self.config.excluded_patterns,
+            progress_callback=self._handle_progress,
+            cancel_requested=self._cancel_event.is_set,
         )
         result = scanner.scan()
         self.scan_finished.emit(result, str(root))
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+    def _handle_progress(self, progress: ScanProgress) -> None:
+        self.scan_progress.emit(
+            progress.scanned_directories,
+            progress.total_directories,
+            progress.current_path,
+        )
 
 
 class MainWindow(QMainWindow):
@@ -65,6 +81,9 @@ class MainWindow(QMainWindow):
         self.config = load_config()
         self._worker: ScanWorker | None = None
         self._current_root = Path(self.config.root_folder).expanduser() if self.config.root_folder else None
+        self._scan_in_progress = False
+        self._last_scanned_directories = 0
+        self._last_total_directories = 1
 
         self.setWindowTitle("EmptySearcher")
         self.resize(1400, 860)
@@ -82,7 +101,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_header())
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_rule_panel())
+        self.rule_panel = self._build_rule_panel()
+        splitter.addWidget(self.rule_panel)
         splitter.addWidget(self._build_results_panel())
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 0)
@@ -115,11 +135,16 @@ class MainWindow(QMainWindow):
         self.root_edit.editingFinished.connect(self._handle_root_edit_committed)
 
         browse_button = QPushButton("Sfoglia")
+        self.browse_button = browse_button
         browse_button.clicked.connect(self._choose_root)
 
         self.scan_button = QPushButton("Avvia scansione")
         self.scan_button.setObjectName("PrimaryButton")
         self.scan_button.clicked.connect(self._start_scan)
+
+        self.stop_button = QPushButton("Arresta scansione")
+        self.stop_button.clicked.connect(self._stop_scan)
+        self.stop_button.setEnabled(False)
 
         self.save_config_button = QPushButton("Salva configurazione")
         self.save_config_button.clicked.connect(self._save_current_config)
@@ -130,14 +155,28 @@ class MainWindow(QMainWindow):
         self.delete_button = QPushButton("Elimina selezionate nel cestino")
         self.delete_button.clicked.connect(self._delete_checked_items)
 
-        layout.addWidget(title, 0, 0, 1, 4)
-        layout.addWidget(subtitle, 1, 0, 1, 4)
+        self.progress_label = QLabel("Cartelle lette: 0 / 0")
+        self.progress_label.setObjectName("ProgressLabel")
+        self.current_scan_label = QLabel("In attesa di una scansione.")
+        self.current_scan_label.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(1)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+
+        layout.addWidget(title, 0, 0, 1, 5)
+        layout.addWidget(subtitle, 1, 0, 1, 5)
         layout.addWidget(self.root_edit, 2, 0, 1, 2)
         layout.addWidget(browse_button, 2, 2)
         layout.addWidget(self.scan_button, 2, 3)
+        layout.addWidget(self.stop_button, 2, 4)
         layout.addWidget(self.save_config_button, 3, 0)
         layout.addWidget(self.reload_config_button, 3, 1)
-        layout.addWidget(self.delete_button, 3, 3)
+        layout.addWidget(self.delete_button, 3, 4)
+        layout.addWidget(self.progress_label, 4, 0, 1, 2)
+        layout.addWidget(self.current_scan_label, 4, 2, 1, 3)
+        layout.addWidget(self.progress_bar, 5, 0, 1, 5)
         return frame
 
     def _build_rule_panel(self) -> QWidget:
@@ -275,6 +314,10 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
                 color: #102030;
             }
+            QLabel#ProgressLabel {
+                font-weight: 700;
+                color: #102030;
+            }
             QPushButton {
                 min-height: 36px;
                 border-radius: 12px;
@@ -287,6 +330,16 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
                 border: none;
                 font-weight: 700;
+            }
+            QProgressBar {
+                border: 1px solid #d1dbe6;
+                border-radius: 12px;
+                background: #edf3f8;
+                min-height: 18px;
+            }
+            QProgressBar::chunk {
+                background: #0c7d69;
+                border-radius: 10px;
             }
             QLineEdit, QListWidget, QTextEdit, QTreeWidget {
                 border: 1px solid #d1dbe6;
@@ -334,6 +387,9 @@ class MainWindow(QMainWindow):
             self._commit_root_folder(selected, persist=True)
 
     def _start_scan(self) -> None:
+        if self._scan_in_progress:
+            return
+
         root_text = self.root_edit.text().strip()
         if not root_text:
             QMessageBox.warning(self, "Cartella mancante", "Seleziona una cartella radice prima di avviare la scansione.")
@@ -348,35 +404,59 @@ class MainWindow(QMainWindow):
         self._persist_config()
         self._current_root = root
 
-        self.scan_button.setEnabled(False)
-        self.delete_button.setEnabled(False)
+        self._last_scanned_directories = 0
+        self._last_total_directories = 1
+        self.progress_bar.setMaximum(1)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Cartelle lette: 0 / 1")
+        self.current_scan_label.setText(f"In lettura: {root}")
+        self._set_scanning_state(True)
         self.tree.clear()
         self.summary_label.setText("Scansione in corso...")
         self.details.setPlainText("Analisi della struttura cartelle in corso.")
         self.statusBar().showMessage(f"Scansione di {root}")
 
         self._worker = ScanWorker(self.config)
+        self._worker.scan_progress.connect(self._handle_scan_progress)
         self._worker.scan_finished.connect(self._handle_scan_finished)
         self._worker.start()
 
     def _handle_scan_finished(self, result: ScanResult, root_text: str) -> None:
-        self.scan_button.setEnabled(True)
-        self.delete_button.setEnabled(True)
         self._worker = None
+        self._set_scanning_state(False)
 
         self.tree.blockSignals(True)
         self.tree.clear()
-        for node in result.roots:
-            self.tree.addTopLevelItem(self._build_tree_item(node))
-        self.tree.expandToDepth(1)
+        if not result.cancelled:
+            for node in result.roots:
+                self.tree.addTopLevelItem(self._build_tree_item(node))
+            self.tree.expandToDepth(1)
         self.tree.blockSignals(False)
 
         total = self._count_items()
-        self.summary_label.setText(f"Trovate {total} cartelle candidate in {result.scanned_directories} cartelle analizzate.")
-        self.details.setPlainText(
-            "Le cartelle selezionate verranno inviate al cestino di sistema. "
-            "Le cartelle candidate possono contenere file o sottocartelle ignorate."
-        )
+        if result.cancelled:
+            self.summary_label.setText(
+                f"Scansione interrotta dopo {self._last_scanned_directories} cartelle lette su {self._last_total_directories} individuate."
+            )
+            self.details.setPlainText(
+                "La scansione e' stata interrotta dall'utente prima del completamento."
+            )
+            self.current_scan_label.setText("Scansione interrotta.")
+            self.statusBar().showMessage(f"Scansione interrotta su {root_text}")
+            return
+        if total == 0:
+            self.summary_label.setText(f"Nessuna cartella candidata trovata in {result.scanned_directories} cartelle analizzate.")
+            self.details.setPlainText(
+                "Nessuna cartella vuota o effettivamente vuota trovata con le regole attuali. "
+                "Se ti aspettavi risultati, controlla pattern ignorati ed esclusi."
+            )
+        else:
+            self.summary_label.setText(f"Trovate {total} cartelle candidate in {result.scanned_directories} cartelle analizzate.")
+            self.details.setPlainText(
+                "Le cartelle selezionate verranno inviate al cestino di sistema. "
+                "Le cartelle candidate possono contenere file o sottocartelle ignorate."
+            )
+        self.current_scan_label.setText("Scansione completata.")
         self.statusBar().showMessage(f"Scansione completata su {root_text}")
 
     def _build_tree_item(self, node: CandidateNode) -> QTreeWidgetItem:
@@ -417,6 +497,9 @@ class MainWindow(QMainWindow):
         relative = self._relative_to_root(path)
 
         menu = QMenu(self)
+        open_action = QAction("Apri", self)
+        open_action.triggered.connect(lambda: self._open_in_system_explorer(path))
+
         ignore_action = QAction("Aggiungi ai pattern cartelle ignorate", self)
         ignore_action.triggered.connect(lambda: self._append_pattern(self.ignored_dirs_list, relative, rescan=True))
 
@@ -426,6 +509,8 @@ class MainWindow(QMainWindow):
         delete_action = QAction("Invia questa cartella al cestino", self)
         delete_action.triggered.connect(lambda: self._trash_paths([path]))
 
+        menu.addAction(open_action)
+        menu.addSeparator()
         menu.addAction(ignore_action)
         menu.addAction(exclude_action)
         menu.addSeparator()
@@ -475,11 +560,15 @@ class MainWindow(QMainWindow):
         save_config(self.config)
 
     def _save_current_config(self) -> None:
+        if self._scan_in_progress:
+            return
         self._update_config_from_widgets()
         self._persist_config()
         self.statusBar().showMessage("Configurazione salvata.")
 
     def _reload_saved_config(self) -> None:
+        if self._scan_in_progress:
+            return
         self.config = load_config()
         self._current_root = Path(self.config.root_folder).expanduser() if self.config.root_folder else None
         self._load_config_into_widgets()
@@ -489,6 +578,8 @@ class MainWindow(QMainWindow):
         self._restore_startup_state()
 
     def _handle_root_edit_committed(self) -> None:
+        if self._scan_in_progress:
+            return
         self._commit_root_folder(self.root_edit.text().strip(), persist=True)
 
     def _commit_root_folder(self, root_text: str, persist: bool) -> None:
@@ -510,6 +601,8 @@ class MainWindow(QMainWindow):
         return [widget.item(index).text() for index in range(widget.count())]
 
     def _delete_checked_items(self) -> None:
+        if self._scan_in_progress:
+            return
         paths = self._checked_paths()
         if not paths:
             QMessageBox.information(self, "Nessuna selezione", "Non ci sono cartelle selezionate da eliminare.")
@@ -545,6 +638,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Eliminazione completata", f"Inviate al cestino {deleted} cartelle.")
 
         self._start_scan()
+
+    def _open_in_system_explorer(self, path: Path) -> None:
+        if not path.exists():
+            QMessageBox.warning(self, "Percorso non disponibile", f"La cartella non esiste piu':\n{path}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(self, "Apertura non riuscita", f"Impossibile aprire la cartella:\n{path}")
 
     def _checked_paths(self) -> list[Path]:
         collected: list[Path] = []
@@ -605,6 +705,42 @@ class MainWindow(QMainWindow):
         return str(Path.home())
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._worker and self._worker.isRunning():
+            self._stop_scan()
+            event.ignore()
+            return
         self._update_config_from_widgets()
         self._persist_config()
         super().closeEvent(event)
+
+    def _set_scanning_state(self, scanning: bool) -> None:
+        self._scan_in_progress = scanning
+        self.root_edit.setEnabled(not scanning)
+        self.browse_button.setEnabled(not scanning)
+        self.scan_button.setEnabled(not scanning)
+        self.save_config_button.setEnabled(not scanning)
+        self.reload_config_button.setEnabled(not scanning)
+        self.delete_button.setEnabled(not scanning)
+        self.rule_panel.setEnabled(not scanning)
+        self.tree.setEnabled(not scanning)
+        self.stop_button.setEnabled(scanning)
+        if scanning:
+            self.stop_button.setFocus()
+
+    def _stop_scan(self) -> None:
+        if self._worker is None or not self._worker.isRunning():
+            return
+        self._worker.request_cancel()
+        self.stop_button.setEnabled(False)
+        self.current_scan_label.setText("Richiesta di arresto in corso...")
+        self.statusBar().showMessage("Arresto scansione richiesto...")
+
+    def _handle_scan_progress(self, scanned_directories: int, total_directories: int, current_path: str) -> None:
+        safe_total = max(total_directories, 1)
+        safe_scanned = max(0, min(scanned_directories, safe_total))
+        self._last_scanned_directories = safe_scanned
+        self._last_total_directories = safe_total
+        self.progress_bar.setMaximum(safe_total)
+        self.progress_bar.setValue(safe_scanned)
+        self.progress_label.setText(f"Cartelle lette: {safe_scanned} / {safe_total}")
+        self.current_scan_label.setText(f"In lettura: {current_path}")
