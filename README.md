@@ -29,7 +29,7 @@ emptysearcher
 Esempio con PyInstaller:
 
 ```bash
-pip install pyinstaller
+pip install ".[build]"
 pyinstaller --noconfirm --windowed --name EmptySearcher --paths src src/emptysearcher/app.py
 ```
 
@@ -38,3 +38,30 @@ Per un vero output cross-platform, la build va eseguita sulla piattaforma di des
 - Windows -> `.exe`
 - macOS -> `.app`
 - Linux -> binario nativo
+
+## Build automatica su GitHub
+
+Il repository include la workflow [build-release.yml](.github/workflows/build-release.yml) che:
+
+- compila l'app su `Windows`, `macOS` e `Linux`;
+- allega i pacchetti come artifact del workflow a ogni `push`, `pull request` o avvio manuale;
+- pubblica automaticamente gli asset della release quando viene creato un tag `v*`, per esempio `v0.1.0`.
+
+Asset pubblicati:
+
+- `EmptySearcher-windows.zip`
+- `EmptySearcher-macos.zip`
+- `EmptySearcher-linux.tar.gz`
+
+Esempio di pubblicazione release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Una volta esiste una release GitHub, i binari possono essere scaricati direttamente da remoto dalla pagina release o tramite URL stabili del tipo:
+
+- `https://github.com/<owner>/<repo>/releases/latest/download/EmptySearcher-windows.zip`
+- `https://github.com/<owner>/<repo>/releases/latest/download/EmptySearcher-macos.zip`
+- `https://github.com/<owner>/<repo>/releases/latest/download/EmptySearcher-linux.tar.gz`
