@@ -1,0 +1,2 @@
+"""EmptySearcher package."""
+
