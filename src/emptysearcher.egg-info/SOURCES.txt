@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/emptysearcher/__init__.py
+src/emptysearcher/app.py
+src/emptysearcher/config.py
+src/emptysearcher/scanner.py
+src/emptysearcher.egg-info/PKG-INFO
+src/emptysearcher.egg-info/SOURCES.txt
+src/emptysearcher.egg-info/dependency_links.txt
+src/emptysearcher.egg-info/entry_points.txt
+src/emptysearcher.egg-info/requires.txt
+src/emptysearcher.egg-info/top_level.txt
+src/emptysearcher/ui/__init__.py
+src/emptysearcher/ui/main_window.py
+tests/test_scanner.py

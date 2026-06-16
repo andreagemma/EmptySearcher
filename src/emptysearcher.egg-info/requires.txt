@@ -1,0 +1,5 @@
+PySide6>=6.7
+Send2Trash>=1.8.3
+
+[build]
+PyInstaller>=6.10
